@@ -1,206 +1,366 @@
-# ProMis → Nav2 Integration: Running Robot Navigation in RViz
 
-## 1. System Overview
 
-This setup enables a Turtlebot3 robot in Gazebo to navigate using a map generated from ProMis.
+# I. Map File Preparation
 
-Pipeline:
+## 1. Create directories
+
+```bash
+mkdir -p ~/promis_nav2_maps/darmstadt_map
+mkdir -p ~/promis_nav2_maps/config
+```
+
+## 2. Copy map files from Windows to WSL
+
+Your source path:
 
 ```text
-ProMis → OccupancyGrid (/map) → Nav2 → Robot Motion (Gazebo)
+C:\Users\rensh\Desktop\CE Semester 7\Simon Kohaut\code
+```
+
+In WSL:
+
+```bash
+cp "/mnt/c/Users/rensh/Desktop/CE Semester 7/Simon Kohaut/code/map.pgm" \
+   ~/promis_nav2_maps/darmstadt_map/
+
+cp "/mnt/c/Users/rensh/Desktop/CE Semester 7/Simon Kohaut/code/map.yaml" \
+   ~/promis_nav2_maps/darmstadt_map/
+```
+
+## 3. Verify files
+
+```bash
+ls ~/promis_nav2_maps/darmstadt_map
+```
+
+Expected:
+
+```text
+map.pgm  map.yaml
 ```
 
 ---
 
-## 2. Prerequisites
+# II. Create Map Server Parameter File
 
-Make sure the following components are available:
+## 1. Edit file
 
-* ProMis-generated grid (`.npy`)
-* Metadata file (`.yaml`)
-* ROS2 workspace built (`colcon build`)
-* `promis_costmap_publisher` implemented
-* Turtlebot3 packages installed
-* Nav2 installed
+```bash
+nano ~/promis_nav2_maps/config/map_server_params.yaml
+```
+
+Content:
+
+```yaml
+map_server:
+  ros__parameters:
+    yaml_filename: /home/xiaoyuweng/promis_nav2_maps/darmstadt_map/map.yaml
+
+lifecycle_manager:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    node_names: ['map_server']
+```
+
+Save and exit.
+
+## 2. Verify
+
+```bash
+cat ~/promis_nav2_maps/config/map_server_params.yaml
+```
 
 ---
 
-## 3. Launch the Full System
+# III. Start Map Display Pipeline
 
-### Terminal 1: Start Gazebo
+## Terminal 1: map_server
 
 ```bash
 source /opt/ros/humble/setup.bash
-export TURTLEBOT3_MODEL=burger
-ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py
+
+ros2 run nav2_map_server map_server \
+--ros-args \
+--params-file ~/promis_nav2_maps/config/map_server_params.yaml
 ```
 
----
-
-### Terminal 2: Start Nav2
+## Terminal 2: lifecycle_manager
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash
-export TURTLEBOT3_MODEL=burger
-ros2 launch nav2_bringup navigation_launch.py use_sim_time:=True
+
+ros2 run nav2_lifecycle_manager lifecycle_manager \
+--ros-args \
+--params-file ~/promis_nav2_maps/config/map_server_params.yaml
 ```
 
----
-
-### Terminal 3: Publish ProMis Map
+## Terminal 3: check topics
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash
-
-ros2 run promis_nav2_bridge promis_costmap_publisher \
-  --ros-args \
-  -p grid_npy:=/path/to/promis_prob_grid.npy \
-  -p meta_yaml:=/path/to/promis_grid_meta.yaml \
-  -p topic:=/map
+ros2 topic list
 ```
 
----
+Expected:
 
-### Terminal 4: Publish TF (if needed)
+```text
+/map
+/map_server/transition_event
+```
+
+## Terminal 3: check map data
 
 ```bash
-ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map odom
+source /opt/ros/humble/setup.bash
+ros2 topic echo /map --once
+```
+
+Expected fields:
+
+* resolution: 1.0
+* width: 200
+* height: 200
+* origin.x: -100
+* origin.y: -100
+
+---
+
+# IV. Open RViz and Display Map
+
+## Terminal 4
+
+```bash
+source /opt/ros/humble/setup.bash
+rviz2
+```
+
+## RViz actions (not commands)
+
+1. Set `Fixed Frame` to `map`
+2. Click `Add`
+3. Choose `By topic`
+4. Select `/map`
+5. Set QoS:
+
+   * Reliability = Reliable
+   * Durability = Transient Local
+
+Optional:
+
+* Change view to `TopDownOrtho`
+
+---
+
+# V. Add Minimal TF Tree
+
+## Terminal 5: map → odom
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 run tf2_ros static_transform_publisher \
+--x 0 --y 0 --z 0 \
+--roll 0 --pitch 0 --yaw 0 \
+--frame-id map \
+--child-frame-id odom
+```
+
+## Terminal 6: odom → base_link
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 run tf2_ros static_transform_publisher \
+--x 0 --y 0 --z 0 \
+--roll 0 --pitch 0 --yaw 0 \
+--frame-id odom \
+--child-frame-id base_link
+```
+
+Keep both terminals running.
+
+---
+
+# VI. Create Navigation Parameter File
+
+## 1. Create file
+
+```bash
+nano ~/promis_nav2_maps/config/nav2_navigation_only.yaml
+```
+
+Paste the full YAML content (same as before).
+
+---
+
+# VII. Launch Nav2 Navigation
+
+Do NOT stop:
+
+* map_server
+* lifecycle_manager
+* static TF
+
+## New terminal
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 launch nav2_bringup navigation_launch.py \
+use_sim_time:=false \
+params_file:=/home/xiaoyuweng/promis_nav2_maps/config/nav2_navigation_only.yaml
 ```
 
 ---
 
-### Terminal 5: Start RViz
+# VIII. Verify Nav2
+
+## Nodes
+
+```bash
+ros2 node list
+```
+
+Expect:
+
+* /planner_server
+* /controller_server
+* /bt_navigator
+* /behavior_server
+
+## Costmap topics
+
+```bash
+ros2 topic list | grep costmap
+```
+
+## Plan topics
+
+```bash
+ros2 topic list | grep plan
+```
+
+## Actions
+
+```bash
+ros2 action list
+```
+
+---
+
+# IX. RViz Setup for Navigation
+
+Add:
+
+* Map → /map
+* Map → /global_costmap/costmap
+* Map → /local_costmap/costmap
+* TF
+* Path → /plan
+
+Optional:
+
+* Path → /plan_smoothed
+
+---
+
+# X. Send Navigation Goal
+
+## Navigate
+
+```bash
+ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
+"{pose: {header: {frame_id: map}, pose: {position: {x: 10.0, y: 10.0, z: 0.0}, orientation: {w: 1.0}}}}"
+```
+
+## Check path
+
+```bash
+ros2 topic echo /plan --once
+```
+
+---
+
+# XI. Pure Planning (Recommended)
+
+```bash
+ros2 action send_goal /compute_path_to_pose nav2_msgs/action/ComputePathToPose \
+"{goal: {header: {frame_id: map}, pose: {position: {x: 10.0, y: 10.0, z: 0.0}, orientation: {w: 1.0}}}, start: {header: {frame_id: map}, pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {w: 1.0}}}, use_start: true}"
+```
+
+---
+
+# XII. Controller Abort Explanation
+
+Logs:
+
+```text
+[follow_path] [ActionServer] Aborting handle.
+```
+
+Meaning:
+
+* Planning succeeded
+* Execution failed due to no odometry
+
+---
+
+# XIII. Stop Commands
+
+```bash
+Ctrl + C
+```
+
+Stop all running terminals if needed.
+
+---
+
+# XIV. Minimal Re-run Sequence
+
+## A. Map
+
+```bash
+ros2 run nav2_map_server map_server --ros-args --params-file ~/promis_nav2_maps/config/map_server_params.yaml
+```
+
+```bash
+ros2 run nav2_lifecycle_manager lifecycle_manager --ros-args --params-file ~/promis_nav2_maps/config/map_server_params.yaml
+```
+
+## B. TF
+
+```bash
+ros2 run tf2_ros static_transform_publisher --frame-id map --child-frame-id odom ...
+```
+
+```bash
+ros2 run tf2_ros static_transform_publisher --frame-id odom --child-frame-id base_link ...
+```
+
+## C. Nav2
+
+```bash
+ros2 launch nav2_bringup navigation_launch.py use_sim_time:=false params_file:=...
+```
+
+## D. RViz
 
 ```bash
 rviz2
 ```
 
----
-
-## 4. Configure RViz
-
-Set:
-
-```text
-Fixed Frame = map
-```
-
-Add the following displays:
-
-```text
-Map (Topic: /map)
-RobotModel
-TF
-LaserScan (optional)
-Path (optional)
-```
-
-Adjust visualization:
-
-```text
-Map Alpha ≈ 0.2–0.5 (to make robot visible)
-TF → Show Names (optional)
-```
-
----
-
-## 5. Verify System State
-
-Before sending any goal, confirm:
-
-### 5.1 Map is visible
-
-* `/map` is displayed correctly
-* Size and position match metadata
-
----
-
-### 5.2 Robot is visible
-
-* RobotModel appears in RViz
-* TF frames (`base_link`, `odom`, `map`) are present
-
----
-
-### 5.3 TF chain is valid
-
-```text
-map → odom → base_link
-```
-
-Check:
+## E. Goal
 
 ```bash
-ros2 run tf2_ros tf2_echo map base_link
+ros2 action send_goal /navigate_to_pose ...
 ```
 
----
-
-## 6. Send Navigation Goal in RViz
-
-In RViz:
-
-```text
-Click: 2D Goal Pose
-```
-
-Then:
-
-```text
-Click and drag on the map to set:
-- Position (click)
-- Orientation (drag direction)
-```
-
----
-
-## 7. Expected Behavior
-
-If the system is correctly configured:
-
-### In RViz
-
-* A path appears (`/plan`)
-* The robot orientation updates
-* Path visualization is visible
-
----
-
-### In ROS topics
+## F. Plan
 
 ```bash
-ros2 topic echo /plan
-ros2 topic echo /cmd_vel
-```
-
-You should see:
-
-```text
-/plan    → path data
-/cmd_vel → velocity commands
+ros2 topic echo /plan --once
 ```
 
 ---
-
-## 8. Recommended Goal Selection
-
-For initial testing:
-
-* Choose a goal close to the robot
-* Avoid edges of the map
-* Avoid high-cost or blocked regions
-* Use clearly free areas
-
-Example:
-
-```text
-Robot position ≈ (-2, -0.5)
-
-Try goals like:
-(-1, -0.5)
-(-2, 0.5)
-(-1, 0.5)
-```
 

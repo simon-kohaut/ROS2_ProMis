@@ -1,0 +1,17 @@
+platform_router:
+  ros__parameters:
+    robot_name: tb3
+    robot_type: turtlebot3
+    enable_scan: true
+    platform_cmd_vel_topic: /platform/cmd_vel
+    platform_odom_topic: /platform/odom
+    platform_scan_topic: /platform/scan
+    platform_status_topic: /platform/status
+
+nav2_goal_bridge:
+  ros__parameters:
+    goal_topic: /platform/goal_pose
+    cancel_topic: /platform/cancel_navigation
+    status_topic: /platform/navigation_status
+    feedback_topic: /platform/navigation_feedback
+    action_name: /navigate_to_pose

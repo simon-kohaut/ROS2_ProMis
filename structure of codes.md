@@ -1,5 +1,3 @@
-Great—this is already very well structured. I’ll translate it into clean, technical English while preserving your architecture and intent.
-
 ---
 
 # **Overall Diagram**
